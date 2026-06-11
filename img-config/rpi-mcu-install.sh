@@ -29,12 +29,17 @@ print_usb_toolhead_id_hint() {
             echo "USB-C toolhead serial ID:"
             echo "$toolhead_id"
             echo ""
-            echo "Add or update this in:"
-            echo "${HOME}/printer_data/config/MCU_ID.cfg"
-            echo ""
-            echo "[mcu THR]"
-            echo "serial: $toolhead_id"
-            echo "restart_method: command"
+            if python3 "${HOME}/OpenNept4une/printer-confs/generate_conf.py" --write-mcu-id; then
+                echo "Updated ${HOME}/printer_data/config/MCU_ID.cfg"
+            else
+                echo "Failed to update MCU_ID.cfg automatically. Add/update it manually:"
+                echo ""
+                echo "${HOME}/printer_data/config/MCU_ID.cfg"
+                echo ""
+                echo "[mcu THR]"
+                echo "serial: $toolhead_id"
+                echo "restart_method: command"
+            fi
             echo ""
             return 0
         fi
@@ -45,6 +50,7 @@ print_usb_toolhead_id_hint() {
     echo "USB-C toolhead did not reconnect as a Klipper serial device yet."
     echo "After reboot, check with:"
     echo "ls /dev/serial/by-id/usb-Klipper_stm32f103xe_*"
+    echo "Then run OpenNept4une.sh -> Install/Update printer.cfg to regenerate MCU_ID.cfg."
     echo ""
 }
 

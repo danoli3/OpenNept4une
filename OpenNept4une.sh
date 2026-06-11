@@ -28,6 +28,7 @@ current_branch=""
 model_key=""
 motor_current=""
 pcb_version=""
+toolhead_variant=""
 auto_yes="false"
 
 # ASCII art for OpenNept4une
@@ -551,6 +552,7 @@ check_and_set_printer_model() {
     if [ -z "$MODEL_FROM_FLAG" ]; then
         printf '%s\n' "Model Flag is empty. Running Set Model script..."
         if [ -f "${HOME}/OpenNept4une/img-config/set-printer-model.sh" ]; then
+            export model_key motor_current pcb_version auto_yes toolhead_variant
             "${HOME}/OpenNept4une/img-config/set-printer-model.sh"
         else
             printf '%b\n' "${R}Error: set-printer-model.sh not found.${NC}"
@@ -572,8 +574,45 @@ check_and_set_printer_model() {
 
 extract_model_and_motor() {
     model_key=$(echo "$MODEL_FROM_FLAG" | cut -d'-' -f1 | tr '[:upper:]' '[:lower:]')
-    motor_current=$(echo "$MODEL_FROM_FLAG" | sed -E 's/^[^-]*-([0-9.]+)A.*/\1/')
     pcb_version=$(echo "$MODEL_FROM_FLAG" | sed -E 's/.*-v([0-9.]+).*/\1/')
+
+    # motor_current is only encoded in the flag for n4/n4pro (e.g.
+    # "N4pro-1.2A-v1.1"); n4plus/n4max flags have no "<value>A" segment, so
+    # leave it empty rather than matching the whole flag string.
+    motor_current=""
+    if [[ "$model_key" == "n4" || "$model_key" == "n4pro" ]]; then
+        motor_current=$(echo "$MODEL_FROM_FLAG" | sed -E 's/^[^-]*-([0-9.]+)A.*/\1/')
+    fi
+
+    # Toolhead variant is stored as a "-tribbon" / "-tusbc" suffix on the
+    # flag line. Older flags without this suffix are treated as "ribbon".
+    flag_toolhead=$(echo "$MODEL_FROM_FLAG" | sed -nE 's/.*-t(ribbon|usbc)$/\1/p')
+    case "$flag_toolhead" in
+        usbc) flag_toolhead="usb-c" ;;
+        ribbon|"") flag_toolhead="ribbon" ;;
+    esac
+}
+
+# Update (or add) the "-tribbon"/"-tusbc" suffix on the persisted model flag
+# line in $FLAG_FILE, so headless reflashes remember the toolhead variant.
+update_toolhead_flag() {
+    local new_toolhead="$1" # "ribbon" or "usb-c"
+    local suffix="ribbon"
+    [ "$new_toolhead" = "usb-c" ] && suffix="usbc"
+
+    local new_flag
+    if echo "$MODEL_FROM_FLAG" | grep -qE -- '-t(ribbon|usbc)$'; then
+        new_flag=$(echo "$MODEL_FROM_FLAG" | sed -E "s/-t(ribbon|usbc)\$/-t${suffix}/")
+    else
+        new_flag="${MODEL_FROM_FLAG}-t${suffix}"
+    fi
+
+    if [ "$new_flag" != "$MODEL_FROM_FLAG" ]; then
+        sudo sed -i '/^n4/I d' "$FLAG_FILE"
+        echo "$new_flag" | sudo tee -a "$FLAG_FILE" > /dev/null
+        sync
+        MODEL_FROM_FLAG="$new_flag"
+    fi
 }
 
 install_printer_cfg() {
@@ -593,15 +632,41 @@ install_printer_cfg() {
     PRINTER_CFG_FILE="$PRINTER_CFG_DEST/printer.cfg"
     PRINTER_CFG_SOURCE="${HOME}/OpenNept4une/printer-confs/output.cfg"
 
+    if [ -n "$toolhead_variant" ]; then
+        # --toolhead was passed on the command line: use it and persist it.
+        update_toolhead_flag "$toolhead_variant"
+    elif [ -n "$flag_toolhead" ] && echo "$MODEL_FROM_FLAG" | grep -qE -- '-t(ribbon|usbc)$'; then
+        # Toolhead variant already recorded in the model flag from a
+        # previous run (or initial setup) - reuse it without prompting.
+        toolhead_variant="$flag_toolhead"
+    else
+        # No CLI flag and nothing recorded yet (e.g. flag set before this
+        # feature existed): ask once and persist the answer.
+        printf '\n%s\n' "Which printhead does this machine have?"
+        printf '%s\n' "  1) Ribbon-cable printhead (default, original Neptune 4 toolhead)"
+        printf '%s\n' "  2) USB-C Klipper printhead (separate toolhead MCU)"
+        if [[ "$auto_yes" == "true" ]]; then
+            toolhead_variant="ribbon"
+        else
+            read -r -p "$(printf '%b' "${M}Enter your choice [1/2, default 1] ${NC}: ")" TOOLHEAD_CHOICE
+            if [[ "$TOOLHEAD_CHOICE" == "2" ]]; then
+                toolhead_variant="usb-c"
+            else
+                toolhead_variant="ribbon"
+            fi
+        fi
+        update_toolhead_flag "$toolhead_variant"
+    fi
+
     # Build config based on user selection
     if [[ $model_key == "n4" || $model_key == "n4pro" ]]; then
-        if ! python3 "${HOME}/OpenNept4une/printer-confs/generate_conf.py" "${model_key}" "${motor_current}" >/dev/null 2>&1; then
+        if ! python3 "${HOME}/OpenNept4une/printer-confs/generate_conf.py" "${model_key}" "${motor_current}" --toolhead "${toolhead_variant}"; then
             printf '%b\n' "${R}Failed to generate printer configuration.${NC}"
             return 1
         fi
         sync
     else
-        if ! python3 "${HOME}/OpenNept4une/printer-confs/generate_conf.py" "${model_key}" >/dev/null 2>&1; then
+        if ! python3 "${HOME}/OpenNept4une/printer-confs/generate_conf.py" "${model_key}" --toolhead "${toolhead_variant}"; then
             printf '%b\n' "${R}Failed to generate printer configuration.${NC}"
             return 1
         fi
@@ -952,6 +1017,7 @@ Options:
   -y, --yes                  Automatically confirm all prompts (non-interactive mode).
   --printer_model=MODEL      Specify the printer model (e.g., n4, n4pro, n4plus / n4max).
   --motor_current=VALUE      Specify the stepper motor current (e.g., 0.8, 1.2).
+  --toolhead=TYPE            Specify the printhead variant: ribbon (default) or usb-c.
   -h, --help                 Display this help message and exit.
 
 Commands:
@@ -990,7 +1056,7 @@ print_menu() {
 }
 
 # Parse Command-Line Arguments
-if ! TEMP=$(getopt -o yh --long yes,help,printer_model:,motor_current:,pcb_version: -n 'OpenNept4une.sh' -- "$@"); then
+if ! TEMP=$(getopt -o yh --long yes,help,printer_model:,motor_current:,pcb_version:,toolhead: -n 'OpenNept4une.sh' -- "$@"); then
     printf '%b\n' "${R}Failed to parse options.${NC}" >&2
     exit 1
 fi
@@ -1002,12 +1068,18 @@ while true; do
         --printer_model) model_key="$2"; shift 2 ;;
         --motor_current) motor_current="$2"; shift 2 ;;
         --pcb_version) pcb_version="$2"; shift 2 ;;
+        --toolhead) toolhead_variant="$2"; shift 2 ;;
         -y|--yes) auto_yes="true"; shift ;;
         -h|--help) print_help; exit 0 ;;
         --) shift; break ;;
         *) printf '%b\n' "${R}Invalid option: $1 ${NC}"; exit 1 ;;
     esac
 done
+
+if [[ -n "$toolhead_variant" && "$toolhead_variant" != "ribbon" && "$toolhead_variant" != "usb-c" ]]; then
+    printf '%b\n' "${R}Invalid --toolhead value '${toolhead_variant}' (expected 'ribbon' or 'usb-c').${NC}"
+    exit 1
+fi
 
 # Main Script Logic
 if [ -z "$1" ]; then

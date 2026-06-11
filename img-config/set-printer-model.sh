@@ -45,7 +45,23 @@ else
         [ -z "$motor_current" ] && select_option motor_current "Select the stepper motor current:" "0.8" "1.2"
         [ -z "$pcb_version" ] && select_option pcb_version "Select the PCB version:" "1.0" "1.1"
     fi
+
+    # Interactive selection of printhead/toolhead variant (applies to all models)
+    if [ -z "$toolhead_variant" ]; then
+        select_option toolhead_variant "Select your printhead/toolhead type:" "Ribbon-cable printhead (original)" "USB-C Klipper printhead (separate toolhead MCU)"
+        case "$toolhead_variant" in
+            "USB-C Klipper printhead (separate toolhead MCU)") toolhead_variant="usb-c" ;;
+            *) toolhead_variant="ribbon" ;;
+        esac
+    fi
 fi
+
+# Default/normalize toolhead_variant for headless mode (backward compatible:
+# if not provided, assume the original ribbon-cable printhead).
+case "$toolhead_variant" in
+    usb-c|usbc) toolhead_variant="usb-c" ;;
+    *) toolhead_variant="ribbon" ;;
+esac
 
 # Define FLAG_LINE before generating configuration
 if [[ "$model_key" = "n4" || "$model_key" = "n4pro" ]]; then
@@ -57,6 +73,12 @@ fi
 
 # Capitalize the 1st and 3rd letters of the model_key
 FLAG_LINE=$(echo "$FLAG_LINE" | sed -E 's/^(n)(4)(.)(.*)/\U\1\2\3\E\4/')
+
+# Append the toolhead variant ("ribbon" or "usb-c" -> "usbc") so OpenNept4une.sh
+# can regenerate the right printer.cfg on headless reflashes without re-asking.
+toolhead_suffix="ribbon"
+[ "$toolhead_variant" = "usb-c" ] && toolhead_suffix="usbc"
+FLAG_LINE="${FLAG_LINE}-t${toolhead_suffix}"
 
 echo "DEBUG: FLAG_LINE is $FLAG_LINE"
 
