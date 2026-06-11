@@ -4,21 +4,74 @@
 KLIPPER_DIR="${HOME}/klipper"
 FIRMWARE_DIR="${HOME}/printer_data/config/Firmware"
 MCU_SWFLASH_ALT="${HOME}/OpenNept4une/mcu-firmware/alt-method/mcu-swflash-run.sh"
+USB_TOOLHEAD_CONFIG="${HOME}/OpenNept4une/mcu-firmware/usb_toolhead.config"
+USB_TOOLHEAD_SERIAL_GLOB="/dev/serial/by-id/usb-Klipper_stm32f103xe_*"
+USB_TOOLHEAD_HID_VIDPID="1209:BEBA"
 
 # Helper to apply a minimal config and expand it
 apply_minimal_config() {
     local config_file="$1"
     cd "$KLIPPER_DIR" || exit 1
     make clean
+    rm -rf out
     cp "$config_file" .config
     make olddefconfig
+}
+
+print_usb_toolhead_id_hint() {
+    local toolhead_id
+
+    echo "Waiting for USB-C toolhead to reconnect..."
+    for _ in {1..30}; do
+        toolhead_id=$(compgen -G "$USB_TOOLHEAD_SERIAL_GLOB" | head -n 1)
+        if [[ -n "$toolhead_id" ]]; then
+            echo ""
+            echo "USB-C toolhead serial ID:"
+            echo "$toolhead_id"
+            echo ""
+            echo "Add or update this in:"
+            echo "${HOME}/printer_data/config/MCU_ID.cfg"
+            echo ""
+            echo "[mcu THR]"
+            echo "serial: $toolhead_id"
+            echo "restart_method: command"
+            echo ""
+            return 0
+        fi
+        sleep 1
+    done
+
+    echo ""
+    echo "USB-C toolhead did not reconnect as a Klipper serial device yet."
+    echo "After reboot, check with:"
+    echo "ls /dev/serial/by-id/usb-Klipper_stm32f103xe_*"
+    echo ""
+}
+
+# Request USB serial bootloader entry via 1200 baud + DTR pulse
+request_usb_bootloader() {
+    local device="$1"
+
+    python3 - "$device" <<'PY'
+import sys, fcntl, termios, struct, time
+
+dev = sys.argv[1]
+with open(dev, "rb", buffering=0) as f:
+    fd = f.fileno()
+    fcntl.ioctl(fd, termios.TIOCMBIS, struct.pack("I", termios.TIOCM_DTR))
+    attrs = termios.tcgetattr(fd)
+    attrs[4] = termios.B1200
+    attrs[5] = termios.B1200
+    termios.tcsetattr(fd, termios.TCSANOW, attrs)
+    time.sleep(0.2)
+    fcntl.ioctl(fd, termios.TIOCMBIC, struct.pack("I", termios.TIOCM_DTR))
+PY
 }
 
 # Get current git branch from $KLIPPER_DIR
 cd "$KLIPPER_DIR" || exit 1
 current_branch=$(git rev-parse --abbrev-ref HEAD)
 
-# Check for detached HEAD status
 if [[ "$current_branch" == "HEAD" ]]; then
     echo "Warning: Detached HEAD state detected!"
     sleep 30
@@ -30,9 +83,10 @@ if [[ -z $1 ]]; then
     echo ""
     echo "Choose the MCU(s) to update:"
     echo ""
-    select mcu_choice in "STM32" "Virtual RPi" "Pico-based USB Accelerometer" "All" "Cancel"; do
+    select mcu_choice in "STM32" "USB-C Toolhead" "Virtual RPi" "Pico-based USB Accelerometer" "All" "Cancel"; do
         case $mcu_choice in
             STM32 ) break;;
+            USB-C\ Toolhead ) break;;
             Virtual\ RPi ) break;;
             Pico-based\ USB\ Accelerometer ) break;;
             All ) break;;
@@ -48,7 +102,6 @@ cd "$KLIPPER_DIR" || exit 1
 pull_output=$(git pull origin "$current_branch" 2>&1)
 pull_exit=$?
 
-# Check for git pull errors
 if [[ $pull_exit -ne 0 ]]; then
     echo -e "\n❌ Git pull failed for '$current_branch'!"
     echo "$pull_output"
@@ -56,7 +109,6 @@ if [[ $pull_exit -ne 0 ]]; then
     exit 1
 fi
 
-# Generate and show response message
 if echo "$pull_output" | grep -iq "already up to date"; then
     echo -e "\nℹ️ Branch '$current_branch' is already up to date."
     sleep 5
@@ -111,6 +163,92 @@ if [[ "$mcu_choice" == "STM32" || "$mcu_choice" == "All" ]]; then
                 echo "Power-off the machine and insert the microSD card."
                 sleep 4
                 exit
+            fi
+        fi
+    fi
+fi
+
+### USB-C TOOLHEAD MCU ###
+toolhead_skipped=false
+if [[ "$mcu_choice" == "USB-C Toolhead" || "$mcu_choice" == "All" ]]; then
+    clear
+    echo "Proceeding with USB-C Toolhead MCU Update..."
+
+    while true; do
+        toolhead_device=$(compgen -G "$USB_TOOLHEAD_SERIAL_GLOB" | head -n 1)
+
+        if [[ -n "$toolhead_device" ]] || lsusb -d "$USB_TOOLHEAD_HID_VIDPID" >/dev/null 2>&1; then
+            echo "USB-C toolhead detected. Proceeding..."
+            break
+        fi
+
+        echo ""
+        read -n 1 -p "USB-C toolhead not detected. Press any key to retry, or (s) to skip..." key
+        echo ""
+        if [[ $key == s || $key == S ]]; then
+            toolhead_skipped=true
+            clear
+            break
+        fi
+    done
+
+    if [[ "$toolhead_skipped" == false ]]; then
+        echo "Building USB-C toolhead firmware..."
+        apply_minimal_config "$USB_TOOLHEAD_CONFIG"
+        make || {
+            echo "Failed to build USB-C toolhead firmware."
+            exit 1
+        }
+
+        echo "Stopping Klipper..."
+        sudo service klipper stop || true
+        sleep 2
+
+        if ! lsusb -d "$USB_TOOLHEAD_HID_VIDPID" >/dev/null 2>&1; then
+            if [[ -z "$toolhead_device" || ! -e "$toolhead_device" ]]; then
+                echo "USB-C toolhead serial device disappeared. Skipping flash."
+                if [[ "$mcu_choice" != "All" ]]; then
+                    sudo service klipper start || true
+                fi
+                toolhead_skipped=true
+            else
+                echo "Requesting USB-C toolhead bootloader on $toolhead_device..."
+                request_usb_bootloader "$toolhead_device"
+            fi
+        else
+            echo "USB-C toolhead is already in HID bootloader mode."
+        fi
+
+        if [[ "$toolhead_skipped" == false ]]; then
+            echo "Waiting for USB-C toolhead HID bootloader $USB_TOOLHEAD_HID_VIDPID..."
+            bootloader_found=false
+            for _ in {1..20}; do
+                if lsusb -d "$USB_TOOLHEAD_HID_VIDPID" >/dev/null 2>&1; then
+                    bootloader_found=true
+                    break
+                fi
+                sleep 1
+            done
+
+            if [[ "$bootloader_found" != true ]]; then
+                echo "USB-C toolhead bootloader not detected. Skipping flash."
+                if [[ "$mcu_choice" != "All" ]]; then
+                    sudo service klipper start || true
+                fi
+            else
+                echo "Flashing USB-C toolhead..."
+                make flash FLASH_DEVICE="$USB_TOOLHEAD_HID_VIDPID" || {
+                    echo "Failed to flash USB-C toolhead."
+                    sudo service klipper start || true
+                    exit 1
+                }
+
+                echo "USB-C toolhead update completed."
+                print_usb_toolhead_id_hint
+                if [[ "$mcu_choice" != "All" ]]; then
+                    sudo service klipper start || true
+                fi
+                sleep 2
             fi
         fi
     fi
@@ -179,17 +317,17 @@ if [[ "$mcu_choice" == "Virtual RPi" || "$mcu_choice" == "All" ]]; then
 
     echo "Copying klipper-mcu.service..."
     sudo cp ./scripts/klipper-mcu.service /etc/systemd/system/ || { echo "Failed to copy service file"; exit 1; }
-    
+
     echo "Enabling klipper-mcu.service..."
     sudo systemctl enable klipper-mcu.service || { echo "Failed to enable service"; exit 1; }
-    
+
     echo "Stopping klipper service..."
     sudo service klipper stop || true
 
     if [[ -f /boot/.OpenNept4une.txt ]]; then
         if grep -iq "mks" /boot/.OpenNept4une.txt; then
             echo "Skipping kernel patch for MKS systems..."
-        elif grep -Eqi "dec 11|oct 12" /boot/.OpenNept4une.txt; then 
+        elif grep -Eqi "dec 11|oct 12" /boot/.OpenNept4une.txt; then
             echo "Applying kernel patch..."
             echo "kernel.sched_rt_runtime_us = -1" | sudo tee -a /etc/sysctl.d/10-disable-rt-group-limit.conf
         fi
@@ -197,7 +335,7 @@ if [[ "$mcu_choice" == "Virtual RPi" || "$mcu_choice" == "All" ]]; then
 
     echo "Applying Virtual MCU configuration..."
     apply_minimal_config "${HOME}/OpenNept4une/mcu-firmware/virtualmcu.config"
-    
+
     echo "Flashing Virtual MCU..."
     make flash || { echo "Failed to flash Virtual MCU"; exit 1; }
 
