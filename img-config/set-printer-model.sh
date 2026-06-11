@@ -43,7 +43,9 @@ else
     # Interactive mode for motor current and PCB version if applicable
     if [[ "$model_key" = "n4" || "$model_key" = "n4pro" ]]; then
         [ -z "$motor_current" ] && select_option motor_current "Select the stepper motor current:" "0.8" "1.2"
-        [ -z "$pcb_version" ] && select_option pcb_version "Select the PCB version:" "1.0" "1.1"
+        [ -z "$pcb_version" ] && select_option pcb_version "Select the PCB version:" "1.0" "1.1" "2.2"
+    else
+        [ -z "$pcb_version" ] && select_option pcb_version "Select the PCB version:" "2.0" "2.2"
     fi
 
     # Interactive selection of printhead/toolhead variant (applies to all models)
@@ -67,7 +69,7 @@ esac
 if [[ "$model_key" = "n4" || "$model_key" = "n4pro" ]]; then
     FLAG_LINE="${model_key}-${motor_current}A-v${pcb_version}"
 else
-    pcb_version="2.0"
+    [ -z "$pcb_version" ] && pcb_version="2.0"
     FLAG_LINE="${model_key}-v${pcb_version}"
 fi
 
