@@ -572,6 +572,11 @@ check_and_set_printer_model() {
     fi
 }
 
+# Check whether a USB-C Klipper toolhead MCU is currently connected
+usb_c_toolhead_detected() {
+    compgen -G "/dev/serial/by-id/usb-Klipper_stm32f103xe_*" > /dev/null
+}
+
 extract_model_and_motor() {
     model_key=$(echo "$MODEL_FROM_FLAG" | cut -d'-' -f1 | tr '[:upper:]' '[:lower:]')
     pcb_version=$(echo "$MODEL_FROM_FLAG" | sed -E 's/.*-v([0-9.]+).*/\1/')
@@ -634,6 +639,10 @@ install_printer_cfg() {
 
     if [ -n "$toolhead_variant" ]; then
         # --toolhead was passed on the command line: use it and persist it.
+        if [ "$toolhead_variant" = "usb-c" ] && ! usb_c_toolhead_detected; then
+            printf '%b\n' "${R}ERROR: --toolhead usb-c specified but no USB-C Klipper toolhead detected (expected /dev/serial/by-id/usb-Klipper_stm32f103xe_*).${NC}"
+            return 1
+        fi
         update_toolhead_flag "$toolhead_variant"
     elif [ -n "$flag_toolhead" ] && echo "$MODEL_FROM_FLAG" | grep -qE -- '-t(ribbon|usbc)$'; then
         # Toolhead variant already recorded in the model flag from a
@@ -648,12 +657,20 @@ install_printer_cfg() {
         if [[ "$auto_yes" == "true" ]]; then
             toolhead_variant="ribbon"
         else
-            read -r -p "$(printf '%b' "${M}Enter your choice [1/2, default 1] ${NC}: ")" TOOLHEAD_CHOICE
-            if [[ "$TOOLHEAD_CHOICE" == "2" ]]; then
-                toolhead_variant="usb-c"
-            else
-                toolhead_variant="ribbon"
-            fi
+            while true; do
+                read -r -p "$(printf '%b' "${M}Enter your choice [1/2, default 1] ${NC}: ")" TOOLHEAD_CHOICE
+                if [[ "$TOOLHEAD_CHOICE" == "2" ]]; then
+                    if usb_c_toolhead_detected; then
+                        toolhead_variant="usb-c"
+                        break
+                    else
+                        printf '%s\n' "No USB-C Klipper toolhead detected (expected /dev/serial/by-id/usb-Klipper_stm32f103xe_*). Connect the toolhead and try again, or choose option 1."
+                    fi
+                else
+                    toolhead_variant="ribbon"
+                    break
+                fi
+            done
         fi
         update_toolhead_flag "$toolhead_variant"
     fi
