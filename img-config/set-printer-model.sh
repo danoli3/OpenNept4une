@@ -43,7 +43,7 @@ else
     # Interactive mode for motor current and PCB version if applicable
     if [[ "$model_key" = "n4" || "$model_key" = "n4pro" ]]; then
         [ -z "$motor_current" ] && select_option motor_current "Select the stepper motor current:" "0.8" "1.2"
-        [ -z "$pcb_version" ] && select_option pcb_version "Select the PCB version:" "1.0" "1.1" "2.3"
+        [ -z "$pcb_version" ] && select_option pcb_version "Select the PCB version:" "1.0" "1.1" "1.4"
     else
         [ -z "$pcb_version" ] && select_option pcb_version "Select the PCB version:" "2.0" "2.3"
     fi
