@@ -4,7 +4,7 @@
 KLIPPER_DIR="${HOME}/klipper"
 FIRMWARE_DIR="${HOME}/printer_data/config/Firmware"
 MCU_SWFLASH_ALT="${HOME}/OpenNept4une/mcu-firmware/alt-method/mcu-swflash-run.sh"
-USB_TOOLHEAD_CONFIG="${HOME}/OpenNept4une/mcu-firmware/usb_toolhead.config"
+USB_TOOLHEAD_CONFIG="${HOME}/OpenNept4une/mcu-firmware/usb_c_toolhead.config"
 USB_TOOLHEAD_SERIAL_GLOB="/dev/serial/by-id/usb-Klipper_stm32f103xe_*"
 USB_TOOLHEAD_HID_VIDPID="1209:BEBA"
 
