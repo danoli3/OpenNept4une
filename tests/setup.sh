@@ -87,7 +87,7 @@ clone_or_update() {
         as_user git -C "$dest" pull --ff-only || true
     else
         ok "Cloning ${url}"
-        as_user git clone --depth=1 "$url" "$dest"
+        as_user git clone "$url" "$dest"
     fi
 }
 
@@ -206,6 +206,11 @@ systemctl restart nginx
 if [[ -x "${SCRIPT_DIR}/enable-https.sh" ]]; then
     ok "Enabling HTTPS"
     bash "${SCRIPT_DIR}/enable-https.sh" || echo "Warning: HTTPS setup failed; HTTP still works"
+fi
+
+if [[ -x "${SCRIPT_DIR}/harden-sandbox.sh" ]]; then
+    ok "Applying sandbox harden defaults"
+    bash "${SCRIPT_DIR}/harden-sandbox.sh" || echo "Warning: harden-sandbox.sh failed; continuing"
 fi
 
 ok "Building Linux process MCU"

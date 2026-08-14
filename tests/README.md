@@ -111,17 +111,47 @@ cd ~/OpenNept4une
 sudo ./tests/setup.sh
 ```
 
+Point Fluidd Software Updates at git remotes (your fork, a topic branch, or official):
+
+```bash
+sudo ./tests/patch-git-remotes.sh \
+  --opennept4une-origin https://github.com/YOURUSER/OpenNept4une.git \
+  --opennept4une-branch tests/ci-and-host-sandbox
+```
+
+That unshallows the clones (Moonraker cannot update a `--depth=1` repo), sets `origin`, keeps `upstream` as OpenNeptune3D, and rewrites `[update_manager OpenNept4une]` in `moonraker.conf`. Then use Fluidd → Settings → Software Updates.
+
+This script rewrites remotes. GitHub Actions runs it in a **separate** `patch-git-remotes (dangerzone)` job against a throwaway `--home` tree. It refuses to run in Actions without `--home`. Locally:
+
+```bash
+bash tests/test_patch_git_remotes.sh
+```
+
+Harden the sandbox (nginx headers, optional firewall). Moonraker stays on `:7125`:
+
+```bash
+sudo ./tests/harden-sandbox.sh
+sudo ./tests/harden-sandbox.sh --ufw
+```
+
+To hide Moonraker behind nginx later:
+
+```bash
+sudo ./tests/harden-sandbox.sh --localhost-only
+```
+
 `setup.sh` is safe to re-run. It:
 
 - refuses to run on a real OpenNept4une printer image unless you pass `--force`
 - installs apt packages needed to build Klipper and the Linux process MCU
-- clones Klipper, Moonraker, Fluidd, KAMP, and Kiauh
+- clones Klipper, Moonraker, Fluidd, KAMP, and Kiauh (full history, so Fluidd can update them)
 - runs the upstream Klipper / Moonraker installers
-- installs Fluidd behind nginx on port 80
+- installs Fluidd behind nginx and enables HTTPS
+- registers git update_manager entries; Moonraker stays on `0.0.0.0:7125`
 - generates every model `printer.cfg` into `~/printer_data/config/generated/`
 - installs a **sandbox** `printer.cfg` that talks to the Linux process MCU, not `/dev/ttyS0`
 
-Open Fluidd at `https://<guest-ip>/` (Parallels example: `https://10.211.55.11/`). Moonraker stays on port `7125` behind nginx.
+Open Fluidd at `https://<guest-ip>/` (Parallels example: `https://10.211.55.11/`). Moonraker is also on `http://<guest-ip>:7125/`.
 
 HTTPS uses a **self-signed** certificate. Let's Encrypt cannot sign a Parallels `10.211.55.x` address. The browser will warn; click Advanced → Proceed.
 
@@ -157,3 +187,18 @@ Kiauh is left in `~/kiauh` for later interactive updates. It is not required for
 - Heat-soak and first-layer
 
 Keep live printer overrides in `user_settings.cfg`. Do not treat sandbox motion values as calibrated Max values.
+
+## Security notes
+
+The sandbox is on a private Parallels network, but Moonraker's API is powerful (reboot, rewrite configs, run updates).
+
+After `harden-sandbox.sh` (default):
+
+- Moonraker stays on `0.0.0.0:7125` so Fluidd, Orca, and `curl` can reach it directly
+- Fluidd remains on 80/443 through nginx
+- nginx sends `nosniff` / `SAMEORIGIN` headers
+- `--ufw` allows SSH, HTTP/HTTPS, and 7125
+
+Pass `--localhost-only` if you later want `:7125` off the LAN. Create a Fluidd user and `--force-logins` if you expose the VM beyond this Mac.
+
+Do not put a sudo password in `moonraker.conf`.

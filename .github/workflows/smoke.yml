@@ -27,3 +27,37 @@ jobs:
 
       - name: Run smoke tests
         run: bash tests/smoke.sh
+
+  # Isolated on purpose: this script rewrites git remotes and moonraker.conf.
+  # It must never run against GITHUB_WORKSPACE. The test uses --home on a
+  # throwaway tree and asserts the checkout origin is unchanged.
+  patch-git-remotes:
+    name: patch-git-remotes (dangerzone)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Guard — script refuses the workflow checkout
+        run: |
+          set -euo pipefail
+          if sudo -n true 2>/dev/null; then
+            echo "sudo is available; the script must still refuse GITHUB_WORKSPACE"
+          fi
+          if GITHUB_WORKSPACE="$GITHUB_WORKSPACE" bash tests/patch-git-remotes.sh \
+               --opennept4une-origin https://example.test/should-not-apply.git; then
+            echo "patch-git-remotes.sh rewired or ran against the Actions checkout"
+            exit 1
+          fi
+
+      - name: Record checkout remotes before
+        run: git remote -v | tee /tmp/remotes-before.txt
+
+      - name: Run throwaway-home smoke
+        run: bash tests/test_patch_git_remotes.sh
+
+      - name: Checkout remotes unchanged after
+        run: |
+          set -euo pipefail
+          git remote -v | tee /tmp/remotes-after.txt
+          diff -u /tmp/remotes-before.txt /tmp/remotes-after.txt
