@@ -37,6 +37,8 @@ referenced=(
     "$ROOT/img-config/power_monitor.sh"
     "$ROOT/mcu-firmware/alt-method/mcu-swflash-run.sh"
     "$ROOT/mcu-firmware/alt-method/mcu-swflash-install.sh"
+    "$ROOT/tests/setup.sh"
+    "$ROOT/tests/smoke.sh"
 )
 for path in "${referenced[@]}"; do
     [[ -f "$path" ]] || fail "missing referenced script: $path"
