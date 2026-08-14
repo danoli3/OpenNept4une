@@ -38,6 +38,7 @@ referenced=(
     "$ROOT/mcu-firmware/alt-method/mcu-swflash-run.sh"
     "$ROOT/mcu-firmware/alt-method/mcu-swflash-install.sh"
     "$ROOT/tests/setup.sh"
+    "$ROOT/tests/enable-https.sh"
     "$ROOT/tests/smoke.sh"
 )
 for path in "${referenced[@]}"; do

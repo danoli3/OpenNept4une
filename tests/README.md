@@ -121,7 +121,23 @@ sudo ./tests/setup.sh
 - generates every model `printer.cfg` into `~/printer_data/config/generated/`
 - installs a **sandbox** `printer.cfg` that talks to the Linux process MCU, not `/dev/ttyS0`
 
-Open Fluidd at `http://<guest-ip>/` (Parallels example: `http://10.211.55.11/`). Moonraker is on port `7125`.
+Open Fluidd at `https://<guest-ip>/` (Parallels example: `https://10.211.55.11/`). Moonraker stays on port `7125` behind nginx.
+
+HTTPS uses a **self-signed** certificate. Let's Encrypt cannot sign a Parallels `10.211.55.x` address. The browser will warn; click Advanced → Proceed.
+
+To add HTTPS to an already-provisioned sandbox:
+
+```bash
+sudo ./tests/enable-https.sh
+```
+
+To trust the cert on the Mac after that:
+
+```bash
+scp mks@10.211.55.11:/etc/ssl/opennept4une/opennept4une.crt /tmp/opennept4une.crt
+sudo security add-trusted-cert -d -r trustRoot \
+  -k /Library/Keychains/System.keychain /tmp/opennept4une.crt
+```
 
 Kiauh is left in `~/kiauh` for later interactive updates. It is not required for the first boot.
 

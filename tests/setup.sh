@@ -203,6 +203,11 @@ nginx -t
 systemctl enable nginx
 systemctl restart nginx
 
+if [[ -x "${SCRIPT_DIR}/enable-https.sh" ]]; then
+    ok "Enabling HTTPS"
+    bash "${SCRIPT_DIR}/enable-https.sh" || echo "Warning: HTTPS setup failed; HTTP still works"
+fi
+
 ok "Building Linux process MCU"
 if [[ -f "${REPO_DIR}/mcu-firmware/virtualmcu.config" ]]; then
     as_user cp "${REPO_DIR}/mcu-firmware/virtualmcu.config" "${KLIPPER_DIR}/.config"
