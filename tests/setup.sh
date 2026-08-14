@@ -154,10 +154,17 @@ fi
 
 ok "Installing Fluidd"
 as_user mkdir -p "$FLUIDD_DIR"
-tmpzip="$(mktemp /tmp/fluidd.XXXXXX.zip)"
-wget -q -O "$tmpzip" "$FLUIDD_ZIP"
-as_user unzip -qo "$tmpzip" -d "$FLUIDD_DIR"
-rm -f "$tmpzip"
+if [[ ! -f "${FLUIDD_DIR}/index.html" ]]; then
+    tmpzip="$(as_user mktemp "${TARGET_HOME}/fluidd.XXXXXX.zip")"
+    as_user wget -O "$tmpzip" "$FLUIDD_ZIP" || die "Fluidd download failed"
+    [[ -s "$tmpzip" ]] || die "Fluidd download was empty"
+    as_user unzip -t "$tmpzip" >/dev/null || die "Fluidd zip is not valid"
+    as_user unzip -qo "$tmpzip" -d "$FLUIDD_DIR"
+    rm -f "$tmpzip"
+    [[ -f "${FLUIDD_DIR}/index.html" ]] || die "Fluidd extract did not produce index.html"
+else
+    ok "Fluidd already present; skipping download"
+fi
 chown -R "${TARGET_USER}:${TARGET_USER}" "$FLUIDD_DIR"
 
 ok "Configuring nginx for Fluidd"
