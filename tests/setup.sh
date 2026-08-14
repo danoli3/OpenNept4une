@@ -166,6 +166,8 @@ else
     ok "Fluidd already present; skipping download"
 fi
 chown -R "${TARGET_USER}:${TARGET_USER}" "$FLUIDD_DIR"
+# nginx (www-data) must be able to traverse the home directory
+chmod 755 "$TARGET_HOME"
 
 ok "Configuring nginx for Fluidd"
 cat > /etc/nginx/sites-available/fluidd <<EOF
@@ -317,6 +319,11 @@ EOF
 fi
 
 chown -R "${TARGET_USER}:${TARGET_USER}" "$PDIR"
+# The stock Klipper unit reads ~/printer.cfg, not printer_data/config/printer.cfg
+ln -sfn "${PCONFIG}/printer.cfg" "${TARGET_HOME}/printer.cfg"
+ln -sfn "${PCONFIG}/user_settings.cfg" "${TARGET_HOME}/user_settings.cfg"
+chown -h "${TARGET_USER}:${TARGET_USER}" "${TARGET_HOME}/printer.cfg" "${TARGET_HOME}/user_settings.cfg"
+
 systemctl enable klipper.service 2>/dev/null || true
 systemctl enable moonraker.service 2>/dev/null || true
 systemctl restart klipper.service 2>/dev/null || true
