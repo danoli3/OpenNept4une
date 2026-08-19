@@ -1,15 +1,65 @@
 #!/usr/bin/env bash
 # Armbian image cleanup + sanitize + prep-for-release
+#
+# Default (live printer): sanitize, expand root if on eMMC, power off.
+# Image bake:  IMAGE_BAKE=1  or  --bake
+#   skips expand (expand is why v0.1.7 was 7456 MiB and missed 7.2 GB chips)
+#   skips poweroff and does not regenerate SSH host keys (first boot should)
 
 set -euo pipefail
 shopt -s nullglob dotglob
 
-echo "== Starting cleanup for redistribution =="
+IMAGE_BAKE="${IMAGE_BAKE:-0}"
+DO_EXPAND=1
+DO_POWEROFF=1
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --bake)
+      IMAGE_BAKE=1
+      DO_EXPAND=0
+      DO_POWEROFF=0
+      ;;
+    --no-expand) DO_EXPAND=0 ;;
+    --expand) DO_EXPAND=1 ;;
+    --no-poweroff) DO_POWEROFF=0 ;;
+    --poweroff) DO_POWEROFF=1 ;;
+    -h|--help)
+      cat <<'EOF'
+Usage: sudo ./img-config/dev-image-cleanup.sh [options]
+
+  --bake           Release-image mode: no expand, no poweroff, no new SSH host keys
+  --no-expand      Do not grow mmcblk1p2
+  --no-poweroff    Do not power off at the end
+  --expand         Force partition expand (default unless --bake)
+  --poweroff       Force poweroff (default unless --bake)
+
+Env: IMAGE_BAKE=1 is the same as --bake.
+EOF
+      exit 0
+      ;;
+    *)
+      echo "Unknown option: $1" >&2
+      exit 1
+      ;;
+  esac
+  shift
+done
+
+if [[ "${IMAGE_BAKE}" == "1" ]]; then
+  DO_EXPAND=0
+  DO_POWEROFF=0
+fi
+
+echo "== Starting cleanup for redistribution (bake=${IMAGE_BAKE} expand=${DO_EXPAND} poweroff=${DO_POWEROFF}) =="
 
 # ------------------------------------
 # Resolve invoking user's home (sudo-safe)
+# Image bake / nspawn should set TARGET_USER=mks so we do not sanitize /root.
 # ------------------------------------
-if [[ ${SUDO_USER-} && ${SUDO_USER} != "root" ]]; then
+if [[ -n "${TARGET_USER:-}" && "${TARGET_USER}" != "root" ]]; then
+  USER_NAME="${TARGET_USER}"
+elif [[ ${SUDO_USER-} && ${SUDO_USER} != "root" ]]; then
   USER_NAME="${SUDO_USER}"
 else
   USER_NAME="$(id -un)"
@@ -87,8 +137,12 @@ checkout_main_and_pull_latest() {
     || echo "   Pull failed (local commits/divergence?) in $repo"
 }
 
-checkout_main_and_pull_latest "$USER_HOME/display_connector"
-checkout_main_and_pull_latest "$USER_HOME/OpenNept4une"
+if [[ "${IMAGE_BAKE}" == "1" ]]; then
+  echo "-- Bake mode: leaving git checkouts on their current branches --"
+else
+  checkout_main_and_pull_latest "$USER_HOME/display_connector"
+  checkout_main_and_pull_latest "$USER_HOME/OpenNept4une"
+fi
 
 # -----------------------------
 # 2) Personalised files cleanup
@@ -96,6 +150,7 @@ checkout_main_and_pull_latest "$USER_HOME/OpenNept4une"
 echo "-- Removing personal/app-specific files --"
 
 rm -f "$USER_HOME/printer_data/configs/printer.cfg" || true
+mkdir -p "$USER_HOME/printer_data/config"
 : > "$USER_HOME/printer_data/config/user_settings.cfg"
 
 
@@ -141,9 +196,16 @@ $SUDO rm -f /var/lib/systemd/resolved/* 2>/dev/null || true
 echo "-- Removing machine identity and SSH host keys --"
 
 $SUDO rm -f /etc/machine-id /var/lib/dbus/machine-id || true
-
-$SUDO rm -f /etc/ssh/ssh_host_* || true
-$SUDO ssh-keygen -A
+if [[ "${IMAGE_BAKE}" == "1" ]]; then
+  # Empty id so Armbian first-boot generates a unique one per flash.
+  echo | $SUDO tee /etc/machine-id >/dev/null || true
+  $SUDO chmod 444 /etc/machine-id || true
+  $SUDO ln -sf /etc/machine-id /var/lib/dbus/machine-id || true
+  $SUDO rm -f /etc/ssh/ssh_host_* || true
+else
+  $SUDO rm -f /etc/ssh/ssh_host_* || true
+  $SUDO ssh-keygen -A
+fi
 
 # ------------------------------------
 # 5) Free space/package cleanup
@@ -169,26 +231,35 @@ echo "-- Removing __pycache__ --"
 $SUDO find /usr/lib/python3 "$USER_HOME" -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
 
 # ------------------------------------
-# 6) Expand root partition (only if expected layout)
+# 6) Expand root partition (live printer only)
 # ------------------------------------
-echo "-- Expanding root partition if /dev/mmcblk1p2 exists --"
-DEV="/dev/mmcblk1"
-PART="${DEV}p2"
+# Do not expand when baking a redistributable image. A full-chip dump is
+# why v0.1.7 is 7456 MiB and overflows some 8 GB / 7.2 GB eMMC modules.
+if [[ "${DO_EXPAND}" == "1" ]]; then
+  echo "-- Expanding root partition if /dev/mmcblk1p2 exists --"
+  DEV="/dev/mmcblk1"
+  PART="${DEV}p2"
 
-if [[ -b "$DEV" && -b "$PART" ]]; then
-  echo ',+' | $SUDO sfdisk --force -N 2 "$DEV"
-  $SUDO partprobe "$DEV" || true
-  $SUDO resize2fs "$PART"
+  if [[ -b "$DEV" && -b "$PART" ]]; then
+    echo ',+' | $SUDO sfdisk --force -N 2 "$DEV"
+    $SUDO partprobe "$DEV" || true
+    $SUDO resize2fs "$PART"
+  else
+    echo "   Skipping partition expand: $DEV or $PART not found."
+  fi
 else
-  echo "   Skipping partition expand: $DEV or $PART not found."
+  echo "-- Skipping partition expand (bake/no-expand) --"
 fi
 
 # ------------------------------------
 # Done
 # ------------------------------------
-echo "== Cleanup complete. Syncing and powering off. =="
-
 sync
-sleep 2
-sync
-$SUDO poweroff
+if [[ "${DO_POWEROFF}" == "1" ]]; then
+  echo "== Cleanup complete. Syncing and powering off. =="
+  sleep 2
+  sync
+  $SUDO poweroff
+else
+  echo "== Cleanup complete. Image is ready to dump and shrink. =="
+fi

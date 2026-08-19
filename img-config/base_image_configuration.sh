@@ -8,13 +8,14 @@ if [[ "$(id -u)" -ne 0 ]]; then
   echo "Error: run with sudo:  sudo $0" >&2
   exit 1
 fi
-if [[ -z "${SUDO_USER:-}" || "${SUDO_USER}" = "root" ]]; then
-  echo "Error: do not run as plain root. Run via sudo from your normal user." >&2
-  exit 1
-fi
 
 # ===== Config (override via env) =====
-TARGET_USER="${TARGET_USER:-${SUDO_USER}}"
+# Image bake / nspawn can set TARGET_USER=mks without a login sudo user.
+TARGET_USER="${TARGET_USER:-${SUDO_USER:-}}"
+if [[ -z "${TARGET_USER}" || "${TARGET_USER}" = "root" ]]; then
+  echo "Error: set TARGET_USER or run via sudo from your normal user." >&2
+  exit 1
+fi
 KAMP_REPO="${KAMP_REPO:-https://github.com/kyleisah/Klipper-Adaptive-Meshing-Purging.git}"
 KIAUH_REPO="${KIAUH_REPO:-https://github.com/dw-0/kiauh.git}"
 FLUIDD_DB_URL="${FLUIDD_DB_URL:-https://raw.githubusercontent.com/OpenNeptune3D/OpenNept4une/main/img-config/printer-data/data.mdb}"
@@ -23,7 +24,7 @@ RUN_KIAUH="${RUN_KIAUH:-1}"
 NETPLAN_FILE="${NETPLAN_FILE:-/etc/netplan/10-dhcp-all-interfaces.yaml}"
 
 # If your repo with spidev fixes is elsewhere, set SPIDEV_SRC_DIR before running:
-SPIDEV_SRC_DIR="${SPIDEV_SRC_DIR:-/home/${SUDO_USER}/OpenNept4une/img-config/spidev-fix}"
+SPIDEV_SRC_DIR="${SPIDEV_SRC_DIR:-/home/${TARGET_USER}/OpenNept4une/img-config/spidev-fix}"
 
 # ===== Helpers =====
 die() { echo "Error: $*" >&2; exit 1; }
